@@ -165,10 +165,11 @@ const startHttpServer = (app) => {
   return new Promise((resolve, reject) => {
     const PORT = config.PORT;
 
-    // On Render / Heroku / Railway the host MUST be 0.0.0.0 so the
+    // On Render / Railway / Heroku the host MUST be 0.0.0.0 so the
     // platform reverse-proxy can reach the container.
     // Locally we keep 127.0.0.1 for Vite proxy compatibility.
-    const BIND_HOST = process.env.RENDER || isProduction ? '0.0.0.0' : '127.0.0.1';
+    const isCloud = !!(process.env.RENDER || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+    const BIND_HOST = isCloud || isProduction ? '0.0.0.0' : '127.0.0.1';
 
     const server = app.listen(PORT, BIND_HOST, () => {
       const dbStatus = mongoose.connection.readyState === 1 

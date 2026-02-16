@@ -28,10 +28,11 @@ const envFile = process.env.NODE_ENV === 'production'
   ? path.join(BACKEND_ROOT, '.env.production')
   : path.join(BACKEND_ROOT, '.env');
 
-// On Render / cloud platforms env vars are injected by the platform — the
-// .env file may not exist, and that is perfectly fine.
+// On Render / Railway / cloud platforms env vars are injected by the platform
+// — the .env file may not exist, and that is perfectly fine.
+const isCloudPlatform = !!(process.env.RENDER || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 const dotenvResult = dotenv.config({ path: envFile });
-if (dotenvResult.error && !process.env.RENDER) {
+if (dotenvResult.error && !isCloudPlatform) {
   // Only warn in non-cloud environments; don't crash.
   console.warn(`⚠️  Could not load ${envFile}: ${dotenvResult.error.message}`);
   console.warn('   Continuing with system environment variables…');
