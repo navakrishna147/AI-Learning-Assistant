@@ -33,7 +33,7 @@ import net from 'net';
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-learning-assistant';
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_in_production';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // CORS Origins - Allow frontend to connect
 const CORS_ORIGINS = process.env.CORS_ORIGINS 

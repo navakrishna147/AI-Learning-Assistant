@@ -1,6 +1,10 @@
 import fetch from 'node-fetch';
 
-const apiKey = process.env.GEMINI_API_KEY || 'AIzaSyArXBygxlE7tjy5MP4HBcWmyxRgDgk1n8c';
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) {
+  console.error('❌ GEMINI_API_KEY environment variable is required. Set it before running this test.');
+  process.exit(1);
+}
 
 console.log('\n🔍 Testing Gemini API Key validity...\n');
 console.log(`API Key: ${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 5)}\n`);

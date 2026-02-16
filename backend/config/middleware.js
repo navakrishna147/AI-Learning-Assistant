@@ -14,6 +14,8 @@
 import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 
 export const setupMiddleware = (app, uploadsDir) => {
   // ========== SECURITY HEADERS ==========
@@ -24,6 +26,21 @@ export const setupMiddleware = (app, uploadsDir) => {
       crossOriginResourcePolicy: { policy: 'cross-origin' }
     }));
   }
+
+  // ========== RATE LIMITING ==========
+  // Global: 200 requests per 15 min per IP
+  app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many requests, please try again later' }
+  }));
+
+  // Auth-specific: 20 attempts per 15 min per IP (login, signup, forgot-password)
+  app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: { success: false, message: 'Too many login attempts, please try again later' } }));
+  app.use('/api/auth/signup', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { success: false, message: 'Too many signup attempts, please try again later' } }));
+  app.use('/api/auth/forgot-password', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: { success: false, message: 'Too many password reset attempts, please try again later' } }));
 
   // ========== BODY PARSING ==========
   // Must be before routes
@@ -56,8 +73,20 @@ export const setupMiddleware = (app, uploadsDir) => {
   });
 
   // ========== STATIC FILES ==========
-  // Serve uploaded files
-  app.use('/uploads', express.static(uploadsDir, {
+  // Serve uploaded files — require valid JWT
+  app.use('/uploads', (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authentication required to access files' });
+    }
+    try {
+      const token = authHeader.split(' ')[1];
+      jwt.verify(token, process.env.JWT_SECRET);
+      next();
+    } catch {
+      return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    }
+  }, express.static(uploadsDir, {
     etag: true,
     maxAge: 3600000 // 1 hour cache
   }));

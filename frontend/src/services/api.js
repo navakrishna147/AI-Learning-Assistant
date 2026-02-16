@@ -43,7 +43,7 @@ const createApiInstance = () => {
   
   const instance = axios.create({
     baseURL: config.apiPath,
-    timeout: 30000, // 30 second timeout
+    timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 30000,
     withCredentials: false, // Using Vite proxy — same-origin, no credentials needed
   });
 

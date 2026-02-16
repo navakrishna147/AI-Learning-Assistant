@@ -31,8 +31,12 @@ export const protect = async (req, res, next) => {
       });
     }
 
-    // Verify token
-    const secret = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
+    // Verify token — NO fallback secret; env.js validates JWT_SECRET at startup
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      console.error('CRITICAL: JWT_SECRET is not set');
+      return res.status(500).json({ success: false, message: 'Server configuration error' });
+    }
     const decoded = jwt.verify(token, secret);
 
     // Find user

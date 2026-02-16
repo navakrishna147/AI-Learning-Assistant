@@ -18,14 +18,19 @@ import mongoose from 'mongoose';
 import dns from 'dns';
 
 // ── Fix DNS for mongodb+srv:// on machines with local resolvers ─────────────
-// Only needed when using Atlas/SRV URIs. Skip for local mongodb://127.0.0.1.
+// SRV record lookups require DNS servers that support SRV queries.
+// Many ISP / corporate / hotspot DNS servers silently fail SRV lookups,
+// which causes "querySrv ECONNREFUSED" or "querySrv ETIMEOUT".
+// We ALWAYS prepend reliable public resolvers when using Atlas SRV URIs.
 const uriForDNSCheck = process.env.MONGODB_URI || '';
 if (uriForDNSCheck.startsWith('mongodb+srv://')) {
   try {
-    const servers = dns.getServers();
-    const onlyLocal = servers.every(s => s === '127.0.0.1' || s === '::1');
-    if (onlyLocal) {
-      dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1', ...servers]);
+    const currentServers = dns.getServers();
+    const publicDNS = ['8.8.8.8', '8.8.4.4', '1.1.1.1'];
+    // Only add public servers that aren't already present
+    const toAdd = publicDNS.filter(s => !currentServers.includes(s));
+    if (toAdd.length > 0) {
+      dns.setServers([...toAdd, ...currentServers]);
       console.log('ℹ️  DNS: Prepended public resolvers for SRV lookup support');
     }
   } catch { /* non-critical */ }
@@ -33,7 +38,7 @@ if (uriForDNSCheck.startsWith('mongodb+srv://')) {
 
 // ── Private state ───────────────────────────────────────────────────────────
 let connectionAttempts = 0;
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 7;
 
 // ── Mongoose connection options ─────────────────────────────────────────────
 const getConnectionOptions = () => ({
@@ -92,12 +97,17 @@ const connectDB = async () => {
     );
   }
 
-  // On Windows after a reboot the MongoDB service may report "Running" before
-  // it is actually accepting connections. A brief initial pause prevents the
-  // very first attempt from failing with ECONNREFUSED.
-  if (connectionAttempts === 0 && uri.includes('127.0.0.1')) {
-    console.log('⏳ Waiting 2 s for local MongoDB service to stabilize after boot…');
-    await sleep(2000);
+  // On Windows after a reboot the MongoDB service (or DNS for Atlas) may not
+  // be fully ready. A brief initial pause prevents the very first attempt from
+  // failing with ECONNREFUSED (local) or ETIMEOUT (Atlas SRV lookup).
+  if (connectionAttempts === 0) {
+    const isLocal = uri.includes('127.0.0.1') || uri.includes('localhost');
+    const delayMs = isLocal ? 2000 : 3000;
+    const reason = isLocal
+      ? 'local MongoDB service to stabilize after boot'
+      : 'DNS/network to stabilize for Atlas SRV lookup';
+    console.log(`⏳ Waiting ${delayMs / 1000}s for ${reason}…`);
+    await sleep(delayMs);
   }
 
   while (connectionAttempts < MAX_RETRIES) {
@@ -122,7 +132,8 @@ const connectDB = async () => {
       classifyError(err);
 
       if (connectionAttempts < MAX_RETRIES) {
-        const delay = 3000 * connectionAttempts; // 3s, 6s, 9s, 12s — generous for service startup
+        // Exponential backoff: 2s, 4s, 8s, 12s, 15s, 15s, 15s (capped)
+        const delay = Math.min(2000 * Math.pow(2, connectionAttempts - 1), 15000);
         console.log(`   Retrying in ${delay / 1000}s …\n`);
         await sleep(delay);
       }
@@ -184,11 +195,93 @@ export const isDBConnected = () =>
 
 /** Graceful disconnect */
 export const disconnectDB = async () => {
+  stopConnectionMonitor();
   try {
     await mongoose.disconnect();
     console.log('✅ MongoDB disconnected gracefully');
   } catch (err) {
     console.error('❌ Error disconnecting MongoDB:', err.message);
+  }
+};
+
+// ── Connection Monitor (sleep/wake resilience) ─────────────────────────────
+// After laptop sleep, Atlas TCP connections go stale. Mongoose's built-in
+// auto-reconnect often succeeds, but on prolonged sleep it can fail silently
+// leaving readyState stuck at 0. This monitor detects that and forces a
+// manual reconnect after a grace period.
+let _monitorTimer = null;
+const MONITOR_INTERVAL_MS = 15_000;   // check every 15 seconds (faster sleep/wake detection)
+const RECONNECT_GRACE_MS  = 10_000;   // wait 10s for auto-reconnect first
+let _lastDisconnectedAt = null;
+let _reconnecting = false;
+
+/**
+ * Start background connection monitor. Call once after initial connect.
+ * The timer is unref'd so it won't prevent process.exit().
+ */
+export const startConnectionMonitor = () => {
+  if (_monitorTimer) return; // already running
+
+  _monitorTimer = setInterval(async () => {
+    if (_reconnecting) return; // skip if a reconnect is already in progress
+
+    const state = mongoose.connection.readyState;
+
+    if (state === 1) {
+      // Connected — verify with a lightweight ping
+      try {
+        await mongoose.connection.db.admin().ping();
+        _lastDisconnectedAt = null; // healthy
+      } catch (err) {
+        console.warn('⚠️  MongoDB ping failed despite connected state:', err.message);
+        _lastDisconnectedAt = _lastDisconnectedAt || Date.now();
+      }
+      return;
+    }
+
+    if (state === 2) return; // connecting — let it proceed
+
+    // state === 0 (disconnected) or 3 (disconnecting)
+    if (!_lastDisconnectedAt) {
+      _lastDisconnectedAt = Date.now();
+      console.warn('⚠️  MongoDB disconnected — waiting for auto-reconnect…');
+      return;
+    }
+
+    const elapsed = Date.now() - _lastDisconnectedAt;
+    if (elapsed < RECONNECT_GRACE_MS) return; // still within grace period
+
+    // Grace period exceeded — force manual reconnect
+    _reconnecting = true;
+    console.log('🔄 Auto-reconnect grace period exceeded. Forcing manual reconnect…');
+    try {
+      // Close stale handle first (ignore errors — it may already be dead)
+      try { await mongoose.disconnect(); } catch { /* ignore */ }
+      connectionAttempts = 0; // reset retry counter
+      await connectDB();
+      _lastDisconnectedAt = null;
+      console.log('✅ Manual reconnection successful after sleep/wake');
+    } catch (err) {
+      console.error('❌ Manual reconnection failed:', err.message);
+      console.error('   Will retry on next monitor cycle (30s)…');
+      // Don't reset _lastDisconnectedAt — next cycle will retry immediately
+    } finally {
+      _reconnecting = false;
+    }
+  }, MONITOR_INTERVAL_MS);
+
+  // Don't let the monitor prevent clean process exit
+  _monitorTimer.unref();
+  console.log('✅ MongoDB connection monitor started (15s health check interval)');
+};
+
+/**
+ * Stop the connection monitor (call during graceful shutdown).
+ */
+export const stopConnectionMonitor = () => {
+  if (_monitorTimer) {
+    clearInterval(_monitorTimer);
+    _monitorTimer = null;
   }
 };
 

@@ -20,7 +20,7 @@ cd /d "%~dp0"
 REM --------------------------------------------------------------------------
 REM  Step 1: Verify MongoDB is running (Windows Service)
 REM --------------------------------------------------------------------------
-echo [1/3] Checking MongoDB Windows Service...
+echo [1/4] Checking MongoDB Windows Service...
 sc query MongoDB >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     sc query MongoDB | find "RUNNING" >nul 2>&1
@@ -49,15 +49,33 @@ if %ERRORLEVEL% EQU 0 (
     if %ERRORLEVEL% EQU 0 (
         echo   OK - mongod.exe is running
     ) else (
-        echo   NOTE: MongoDB service not found. Backend will retry connection automatically.
+        echo   NOTE: MongoDB service not found. Using Atlas cloud DB if configured.
     )
 )
 
 REM --------------------------------------------------------------------------
-REM  Step 2: Verify .env files exist
+REM  Step 2: Kill zombie Node processes on backend+frontend ports
+REM          (prevents EADDRINUSE after unclean shutdown / laptop reboot)
 REM --------------------------------------------------------------------------
 echo.
-echo [2/3] Checking configuration...
+echo [2/5] Checking for stale processes on ports 5000 and 5173...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5000 ^| findstr LISTENING 2^>nul') do (
+    echo   Found process %%a on port 5000 - killing...
+    taskkill /F /PID %%a >nul 2>&1
+    timeout /t 1 /nobreak >nul
+)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5173 ^| findstr LISTENING 2^>nul') do (
+    echo   Found process %%a on port 5173 - killing...
+    taskkill /F /PID %%a >nul 2>&1
+    timeout /t 1 /nobreak >nul
+)
+echo   OK - Ports 5000 and 5173 are clear
+
+REM --------------------------------------------------------------------------
+REM  Step 3: Verify .env files exist
+REM --------------------------------------------------------------------------
+echo.
+echo [3/5] Checking configuration...
 if not exist "backend\.env" (
     echo   ERROR: backend\.env not found!  Copy backend\.env.example to backend\.env
     pause
@@ -66,10 +84,48 @@ if not exist "backend\.env" (
 echo   OK - backend\.env found
 
 REM --------------------------------------------------------------------------
-REM  Step 3: Start backend + frontend with concurrently
+REM  Step 4: Verify node_modules and concurrently installed
 REM --------------------------------------------------------------------------
 echo.
-echo [3/3] Starting backend and frontend...
+echo [4/5] Checking dependencies...
+if not exist "node_modules" (
+    echo   Installing root dependencies ^(concurrently^)...
+    call npm install
+    if %ERRORLEVEL% NEQ 0 (
+        echo   ERROR: npm install failed at project root!
+        pause
+        exit /b 1
+    )
+)
+if not exist "backend\node_modules" (
+    echo   Installing backend dependencies...
+    cd backend
+    call npm install
+    cd ..
+    if %ERRORLEVEL% NEQ 0 (
+        echo   ERROR: npm install failed in backend!
+        pause
+        exit /b 1
+    )
+)
+if not exist "frontend\node_modules" (
+    echo   Installing frontend dependencies...
+    cd frontend
+    call npm install
+    cd ..
+    if %ERRORLEVEL% NEQ 0 (
+        echo   ERROR: npm install failed in frontend!
+        pause
+        exit /b 1
+    )
+)
+echo   OK - All dependencies installed
+
+REM --------------------------------------------------------------------------
+REM  Step 5: Start backend + frontend with concurrently
+REM --------------------------------------------------------------------------
+echo.
+echo [5/5] Starting backend and frontend...
 echo.
 echo   Backend  = http://127.0.0.1:5000
 echo   Frontend = http://localhost:5173

@@ -11,22 +11,23 @@
   "ignore": [
     "node_modules",
     "uploads",
+    "logs",
     "*.log",
     ".git",
-    ".env*"
+    ".env*",
+    ".restart-trigger"
   ],
   "ext": "js,json",
-  "delay": 1000,
+  "delay": 1500,
   "restartable": "rs",
-  "verbose": true,
+  "verbose": false,
   "exec": "node",
   "legacyWatch": false,
   "env": {
     "NODE_ENV": "development"
   },
   "events": {
-    "restart": "cls || clear; echo '═══════════════════════════════════════════════════════════════════' && echo '🔄 NODEMON: Server restarting...' && echo '═══════════════════════════════════════════════════════════════════'",
-    "crash": "echo '\n❌ CRASH DETECTED: Server crashed. Waiting for file changes to restart...\n'"
+    "restart": "echo ═══════════════════════════════════════════════════ && echo  NODEMON: Server restarting... && echo ═══════════════════════════════════════════════════"
   },
   "signal": "SIGTERM",
   "exitcrash": false

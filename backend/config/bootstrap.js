@@ -18,6 +18,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
 import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
 
@@ -29,7 +30,7 @@ import {
   validateEnvironment
 } from './env.js';
 
-import connectDB from './db.js';
+import connectDB, { startConnectionMonitor, stopConnectionMonitor } from './db.js';
 import { setupMiddleware } from './middleware.js';
 import { setupRoutes } from './routes.js';
 import { setupErrorHandling } from './errorHandling.js';
@@ -39,6 +40,46 @@ import { initializeEmailService } from '../services/emailConfigValidator.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BACKEND_ROOT = path.dirname(__dirname);
+
+// ============================================================================
+// PORT AVAILABILITY CHECK
+// ============================================================================
+
+/**
+ * Check if a port is available before attempting to listen.
+ * Detects zombie processes left over from unclean shutdowns (laptop reboot,
+ * terminal killed, etc.) and gives an immediate, actionable error message.
+ */
+const checkPortAvailability = (port, host = '127.0.0.1') => {
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          console.error(`\n${'═'.repeat(70)}`);
+          console.error(`❌ PORT ${port} IS ALREADY IN USE`);
+          console.error('═'.repeat(70));
+          console.error('A previous server process is still running.');
+          console.error('');
+          console.error('Fix (run one of these in a terminal):');
+          console.error(`  Windows:  netstat -ano | findstr :${port}`);
+          console.error(`            taskkill /F /PID <PID_NUMBER>`);
+          console.error(`  macOS:    lsof -i :${port} | grep LISTEN`);
+          console.error(`            kill -9 <PID>`);
+          console.error(`  Linux:    fuser -k ${port}/tcp`);
+          console.error('');
+          console.error('Or change PORT in your .env file.');
+          console.error('═'.repeat(70) + '\n');
+          resolve(false);
+        } else {
+          resolve(true); // Non-EADDRINUSE errors are handled by app.listen
+        }
+      })
+      .once('listening', () => {
+        tester.close(() => resolve(true));
+      })
+      .listen(port, host);
+  });
+};
 
 // ============================================================================
 // STARTUP PHASES
@@ -182,8 +223,10 @@ const startHttpServer = (app) => {
 
 export const bootstrap = async () => {
   try {
+    const startTime = Date.now();
     console.log('\n' + '═'.repeat(70));
     console.log('🚀 STARTING APPLICATION BOOTSTRAP SEQUENCE');
+    console.log(`   Time: ${new Date().toISOString()}`);
     console.log('═'.repeat(70) + '\n');
 
     // Phase 1: Filesystem
@@ -200,6 +243,9 @@ export const bootstrap = async () => {
     console.log('Phase 3: Connecting to database...');
     const db = await connectToDatabase();
     console.log('✅ Database connected');
+
+    // Phase 3a: Start connection monitor (sleep/wake resilience)
+    startConnectionMonitor();
 
     // Phase 3b: Email service (non-critical — never blocks startup)
     try {
@@ -225,12 +271,23 @@ export const bootstrap = async () => {
     console.log('Phase 6: Setting up error handling...');
     registerErrorHandling(app);
 
-    // Phase 7: Start server
-    console.log('Phase 7: Starting HTTP server...');
+    // Phase 7: Pre-flight port check
+    console.log('Phase 7: Checking port availability...');
+    const portFree = await checkPortAvailability(config.PORT);
+    if (!portFree) {
+      throw new Error(`Port ${config.PORT} is occupied by another process`);
+    }
+    console.log(`✅ Port ${config.PORT} is available`);
+
+    // Phase 8: Start server
+    console.log('Phase 8: Starting HTTP server...');
     const server = await startHttpServer(app);
 
     // Setup graceful shutdown
     setupGracefulShutdown(server);
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`⏱️  Bootstrap completed in ${elapsed}s\n`);
 
     return { app, server, db };
 
@@ -259,6 +316,9 @@ export const bootstrap = async () => {
 const setupGracefulShutdown = (server) => {
   const shutdown = async (signal) => {
     console.log(`\n📴 ${signal} received. Starting graceful shutdown...`);
+
+    // Stop connection monitor first
+    stopConnectionMonitor();
 
     // Close HTTP server
     server.close(async () => {

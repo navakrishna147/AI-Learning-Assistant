@@ -6,6 +6,7 @@
 # Dependencies
 # ---------------------------------------------------------------------------
 node_modules/
+package-lock.json
 
 # ---------------------------------------------------------------------------
 # Environment variables (secrets — NEVER commit these)
@@ -16,8 +17,7 @@ node_modules/
 .env.production
 .env-fixed
 .env.production-fixed
-
-# Keep example/template files (safe placeholders only)
+.env.local-*
 !.env.example
 !.env.*-example
 
@@ -42,6 +42,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 logs/
+backend/logs/
 
 # ---------------------------------------------------------------------------
 # IDE / Editor
@@ -72,7 +73,9 @@ frontend/android/
 frontend/ios/
 
 # ---------------------------------------------------------------------------
-# Misc
+# Runtime / Temp files
 # ---------------------------------------------------------------------------
+backend/.restart-trigger
+backend/.server-port
 *.pem
 .cache/
