@@ -25,9 +25,13 @@ import axios from 'axios';
  */
 const getBackendConfig = () => {
   const isProduction = import.meta.env.MODE === 'production';
-  // Always use the Vite proxy in development — no hardcoded URLs
-  const apiPath = '/api';
-  
+
+  // In production: use VITE_API_URL (absolute Render backend URL)
+  // In development: use '/api' (Vite proxy forwards to localhost:5000)
+  const apiPath = isProduction
+    ? (import.meta.env.VITE_API_URL || '/api')
+    : '/api';
+
   return {
     apiPath,
     isUsingProxy: !isProduction,
@@ -44,7 +48,7 @@ const createApiInstance = () => {
   const instance = axios.create({
     baseURL: config.apiPath,
     timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 30000,
-    withCredentials: false, // Using Vite proxy — same-origin, no credentials needed
+    withCredentials: false, // JWT via Authorization header — no cookies needed
   });
 
   // ========== REQUEST INTERCEPTOR ==========
