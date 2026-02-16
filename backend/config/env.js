@@ -35,6 +35,8 @@ if (dotenvResult.error && !process.env.RENDER) {
   // Only warn in non-cloud environments; don't crash.
   console.warn(`⚠️  Could not load ${envFile}: ${dotenvResult.error.message}`);
   console.warn('   Continuing with system environment variables…');
+} else if (!dotenvResult.error) {
+  console.log(`✅ Environment loaded from: ${envFile}`);
 }
 
 // ── Validation schema ───────────────────────────────────────────────────────

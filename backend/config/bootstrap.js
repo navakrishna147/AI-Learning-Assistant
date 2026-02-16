@@ -199,9 +199,7 @@ export const bootstrap = async () => {
     // Phase 3: Database
     console.log('Phase 3: Connecting to database...');
     const db = await connectToDatabase();
-    if (db) {
-      console.log('✅ Database connected');
-    }
+    console.log('✅ Database connected');
 
     // Phase 3b: Email service (non-critical — never blocks startup)
     try {
@@ -245,6 +243,12 @@ export const bootstrap = async () => {
       console.error(`\nStack: ${error.stack}`);
     }
     console.error('═'.repeat(70) + '\n');
+
+    // Disconnect mongoose if it was already connected before a later phase failed
+    if (mongoose.connection.readyState === 1) {
+      try { await mongoose.disconnect(); } catch { /* best-effort */ }
+    }
+
     process.exit(1);
   }
 };

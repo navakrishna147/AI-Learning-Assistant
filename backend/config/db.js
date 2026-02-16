@@ -18,17 +18,18 @@ import mongoose from 'mongoose';
 import dns from 'dns';
 
 // ── Fix DNS for mongodb+srv:// on machines with local resolvers ─────────────
-// Some environments (VPNs, corporate networks, Windows with 127.0.0.1 as DNS)
-// break SRV lookups. If we detect the system DNS is a local stub resolver,
-// prepend Google + Cloudflare public DNS so SRV queries succeed.
-try {
-  const servers = dns.getServers();
-  const onlyLocal = servers.every(s => s === '127.0.0.1' || s === '::1');
-  if (onlyLocal) {
-    dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1', ...servers]);
-    console.log('ℹ️  DNS: Prepended public resolvers for SRV lookup support');
-  }
-} catch { /* non-critical */ }
+// Only needed when using Atlas/SRV URIs. Skip for local mongodb://127.0.0.1.
+const uriForDNSCheck = process.env.MONGODB_URI || '';
+if (uriForDNSCheck.startsWith('mongodb+srv://')) {
+  try {
+    const servers = dns.getServers();
+    const onlyLocal = servers.every(s => s === '127.0.0.1' || s === '::1');
+    if (onlyLocal) {
+      dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1', ...servers]);
+      console.log('ℹ️  DNS: Prepended public resolvers for SRV lookup support');
+    }
+  } catch { /* non-critical */ }
+}
 
 // ── Private state ───────────────────────────────────────────────────────────
 let connectionAttempts = 0;
@@ -36,8 +37,8 @@ const MAX_RETRIES = 5;
 
 // ── Mongoose connection options ─────────────────────────────────────────────
 const getConnectionOptions = () => ({
-  serverSelectionTimeoutMS: 10000,   // 10s — generous for Windows service startup
-  connectTimeoutMS: 15000,           // 15s — allow slow first connection after restart
+  serverSelectionTimeoutMS: 15000,   // 15s — generous for Windows service startup after reboot
+  connectTimeoutMS: 20000,           // 20s — allow slow first connection after laptop restart
   socketTimeoutMS: 45000,
   heartbeatFrequencyMS: 5000,        // detect reconnection faster
   maxPoolSize: 10,
@@ -89,6 +90,14 @@ const connectDB = async () => {
       '  • Locally: Add MONGODB_URI to your .env file\n' +
       '  • Format : mongodb+srv://USER:PASS@cluster.mongodb.net/DB?retryWrites=true&w=majority'
     );
+  }
+
+  // On Windows after a reboot the MongoDB service may report "Running" before
+  // it is actually accepting connections. A brief initial pause prevents the
+  // very first attempt from failing with ECONNREFUSED.
+  if (connectionAttempts === 0 && uri.includes('127.0.0.1')) {
+    console.log('⏳ Waiting 2 s for local MongoDB service to stabilize after boot…');
+    await sleep(2000);
   }
 
   while (connectionAttempts < MAX_RETRIES) {

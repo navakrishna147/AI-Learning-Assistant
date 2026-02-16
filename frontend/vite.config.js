@@ -18,9 +18,14 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
+        // Timeout: wait longer for backend to start after reboot
+        timeout: 30000,
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, res) => {
-            console.error(`[proxy] ${err.code || err.message} → ${BACKEND_TARGET}`);
+            console.error(`[proxy] ${err.code || err.message} \u2192 ${BACKEND_TARGET}`);
+            if (err.code === 'ECONNREFUSED') {
+              console.error('[proxy] Backend not running yet. Start backend: cd backend && npm run dev');
+            }
             if (!res.headersSent) {
               res.writeHead(502, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
@@ -32,7 +37,7 @@ export default defineConfig({
             }
           });
           proxy.on('proxyReq', (_p, req) => {
-            console.log(`[proxy] ${req.method} ${req.url} → ${BACKEND_TARGET}`);
+            console.log(`[proxy] ${req.method} ${req.url} \u2192 ${BACKEND_TARGET}`);
           });
         },
       },

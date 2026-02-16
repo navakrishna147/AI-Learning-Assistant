@@ -43,6 +43,8 @@ const BackendStatusBanner = () => {
         setCountdown(0);
         window.__backendAvailable = true;
         window.dispatchEvent(new CustomEvent('backend-status-change', { detail: { available: true } }));
+        // Trigger a soft reload of page data so user sees fresh content
+        window.dispatchEvent(new CustomEvent('backend-recovered'));
         return true;
       } else {
         setBackendDown(true);
